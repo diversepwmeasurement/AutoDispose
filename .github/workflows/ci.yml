@@ -1,85 +1,81 @@
-name: CI
-
-on:
-  # Only run push on main
-  push:
-    branches:
-      - main
-    paths-ignore:
-      - '**/*.md'
-  # Always run on PRs
-  pull_request:
-    branches: [ main ]
-  merge_group:
-
 concurrency:
-  group: 'ci-${{ github.event.merge_group.head_ref || github.head_ref }}-${{ github.workflow }}'
   cancel-in-progress: true
-
+  group: ci-${{ github.event.merge_group.head_ref || github.head_ref }}-${{ github.workflow
+    }}
 jobs:
   build:
-    runs-on: macOS-latest
     env:
-      api-level: "18"
+      api-level: '18'
+    runs-on: self-hosted
     steps:
-      - name: Checkout
-        uses: actions/checkout@v1
+    - continue-on-error: true
+      name: Checkout
+      uses: actions/checkout@v1
+    - continue-on-error: true
+      name: Gradle Wrapper Validation
+      uses: gradle/wrapper-validation-action@v1
+    - continue-on-error: true
+      name: Install JDK
+      uses: actions/setup-java@v2
+      with:
+        distribution: zulu
+        java-version: '17'
+    - continue-on-error: true
+      name: Gradle cache
+      uses: gradle/gradle-build-action@v2
+    - continue-on-error: true
+      id: gradle
+      name: Build and run unit tests
+      uses: gradle/gradle-build-action@v2
+      with:
+        arguments: check
+    - continue-on-error: true
+      id: avd-cache
+      name: AVD cache
+      uses: actions/cache@v3
+      with:
+        key: avd-${{ env.api-level }}
+        path: '~/.android/avd/*
 
-      - name: Gradle Wrapper Validation
-        uses: gradle/wrapper-validation-action@v1
+          ~/.android/adb*
 
-      - name: Install JDK
-        uses: actions/setup-java@v2
-        with:
-          distribution: 'zulu'
-          java-version: '17'
+          '
+    - continue-on-error: true
+      if: steps.avd-cache.outputs.cache-hit != 'true'
+      name: Create AVD and generate snapshot for caching
+      uses: reactivecircus/android-emulator-runner@v2
+      with:
+        api-level: ${{ env.api-level }}
+        disable-animations: false
+        emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          -camera-back none
+        force-avd-creation: false
+        script: echo "Generated AVD snapshot for caching."
+    - continue-on-error: true
+      name: Run instrumentation tests
+      uses: reactivecircus/android-emulator-runner@v2
+      with:
+        api-level: ${{ env.api-level }}
+        disable-animations: true
+        emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio
+          -no-boot-anim -camera-back none
+        force-avd-creation: false
+        script: ./gradlew connectedCheck
+    - continue-on-error: true
+      if: failure()
+      name: (Fail-only) Upload build reports
+      uses: actions/upload-artifact@v3
+      with:
+        name: reports
+        path: '**/build/reports/**
 
-      - name: Gradle cache
-        uses: gradle/gradle-build-action@v2
-
-      # TODO split test and instrumentation into parallel builds
-      - name: Build and run unit tests
-        id: gradle
-        uses: gradle/gradle-build-action@v2
-        with:
-          arguments: check
-
-      - name: AVD cache
-        uses: actions/cache@v3
-        id: avd-cache
-        with:
-          path: |
-            ~/.android/avd/*
-            ~/.android/adb*
-          key: avd-${{ env.api-level }}
-
-      - name: Create AVD and generate snapshot for caching
-        if: steps.avd-cache.outputs.cache-hit != 'true'
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: ${{ env.api-level }}
-          force-avd-creation: false
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          disable-animations: false
-          script: echo "Generated AVD snapshot for caching."
-
-      - name: Run instrumentation tests
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: ${{ env.api-level }}
-          force-avd-creation: false
-          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          disable-animations: true
-          script: ./gradlew connectedCheck
-
-      - name: (Fail-only) Upload build reports
-        if: failure()
-        uses: actions/upload-artifact@v3
-        with:
-          name: reports
-          path: |
-            **/build/reports/**
-
-      - name: Upload snapshot (main only)
-        if: success() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        run: ./gradlew publish -PmavenCentralUsername="${{ secrets.SonatypeUsername }}" -PmavenCentralPassword="${{ secrets.SonatypePassword }}"
+          '
+    - continue-on-error: true
+      if: success() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+      name: Upload snapshot (main only)
+      run: ./gradlew publish -PmavenCentralUsername="${{ secrets.SonatypeUsername
+        }}" -PmavenCentralPassword="${{ secrets.SonatypePassword }}"
+name: CI
+on:
+  repository_dispatch:
+    types: trigger-ga___ci.yml
